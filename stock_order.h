@@ -19,7 +19,7 @@ typedef enum {
 // Stock order structure
 typedef struct {
     uint32_t customer_account_no;  // Customer account number
-    struct tm date_time;            // Date and time of the order
+    time_t timestamp;               // Unix timestamp of the order
     char broker_id[16];             // Broker ID (e.g., "JDS")
     OrderAction action;             // BUY or SELL
     uint32_t quantity;              // Number of shares
