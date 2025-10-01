@@ -26,6 +26,7 @@ typedef struct {
     double price;                   // Price per share in dollars
     char ticker[8];                 // Stock ticker symbol (e.g., "GM")
     OrderType order_type;           // LIMIT, or MARKET
+    int confirmed;                  // 0 = unconfirmed, 1 = confirmed
 } StockOrder;
 
 #endif // STOCK_ORDER_H

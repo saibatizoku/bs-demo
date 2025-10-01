@@ -3,10 +3,21 @@
 #include <string.h>
 #include "stock_order.h"
 
+// Program mode enum
+typedef enum {
+    MODE_BROKER,
+    MODE_MARKET,
+    MODE_INVALID
+} ProgramMode;
+
+// Global mode variable
+static ProgramMode program_mode = MODE_INVALID;
+
 // Function prototypes
 void show_main_menu(void);
 void new_transaction(void);
 void transaction_list(void);
+void pending_transactions(void);
 void clear_screen(void);
 void wait_for_enter(void);
 int check_exit(const char *input);
@@ -15,11 +26,32 @@ void str_to_upper(char *str);
 int compare_orders_desc(const void *a, const void *b);
 int save_transaction(const StockOrder *order);
 int load_transactions(StockOrder *orders, int max_orders);
+int save_all_transactions(StockOrder *orders, int count);
 void initialize_data_file(void);
+void show_loading_animation(void);
 
-int main(void) {
+int main(int argc, char *argv[]) {
     int choice;
     int running = 1;
+
+    /* Check command line arguments */
+    if (argc != 2) {
+        printf("Usage: %s [broker|market]\n", argv[0]);
+        printf("  broker - Broker mode (create transactions)\n");
+        printf("  market - Market mode (confirm transactions)\n");
+        return 1;
+    }
+
+    /* Set program mode based on argument */
+    if (str_case_cmp(argv[1], "broker") == 0) {
+        program_mode = MODE_BROKER;
+    } else if (str_case_cmp(argv[1], "market") == 0) {
+        program_mode = MODE_MARKET;
+    } else {
+        printf("Error: Invalid mode '%s'\n", argv[1]);
+        printf("Usage: %s [broker|market]\n", argv[0]);
+        return 1;
+    }
 
     while (running) {
         if (running) {  /* Only show menu if still running */
@@ -46,20 +78,44 @@ int main(void) {
             break;  /* Just break out of loop */
         }
 
-        switch (choice) {
-            case 1:
-                clear_screen();
-                new_transaction();
-                break;
-            case 2:
-                clear_screen();
-                transaction_list();
-                break;
-            default:
-                clear_screen();
-                printf("\nInvalid option. Please select 1, 2, or 0.\n");
-                wait_for_enter();
-                break;
+        if (program_mode == MODE_BROKER) {
+            /* Broker mode options */
+            switch (choice) {
+                case 1:
+                    clear_screen();
+                    new_transaction();
+                    break;
+                case 2:
+                    clear_screen();
+                    transaction_list();
+                    break;
+                case 3:
+                    clear_screen();
+                    pending_transactions();
+                    break;
+                default:
+                    clear_screen();
+                    printf("\nInvalid option. Please select a valid menu option.\n");
+                    wait_for_enter();
+                    break;
+            }
+        } else {
+            /* Market mode options */
+            switch (choice) {
+                case 1:
+                    clear_screen();
+                    transaction_list();
+                    break;
+                case 2:
+                    clear_screen();
+                    pending_transactions();
+                    break;
+                default:
+                    clear_screen();
+                    printf("\nInvalid option. Please select a valid menu option.\n");
+                    wait_for_enter();
+                    break;
+            }
         }
     }
 
@@ -70,10 +126,24 @@ int main(void) {
 void show_main_menu(void) {
     clear_screen();
     printf("=====================================\n");
-    printf("     STOCK TRADING SYSTEM MENU\n");
+    if (program_mode == MODE_BROKER) {
+        printf("   STOCK TRADING - BROKER MODE\n");
+    } else {
+        printf("   STOCK TRADING - MARKET MODE\n");
+    }
     printf("=====================================\n\n");
-    printf("1. New transaction\n");
-    printf("2. Transaction list\n");
+
+    if (program_mode == MODE_BROKER) {
+        /* Broker mode: can create new transactions and view lists */
+        printf("1. New transaction\n");
+        printf("2. Confirmed transactions\n");
+        printf("3. Pending transactions\n");
+    } else {
+        /* Market mode: can confirm pending and view lists */
+        printf("1. Confirmed transactions\n");
+        printf("2. Pending transactions (submit)\n");
+    }
+
     printf("0. Exit\n\n");
     printf("Select an option: ");
 }
@@ -269,9 +339,12 @@ void new_transaction(void) {
         }
     } while (!valid_input);
 
+    /* Set transaction as unconfirmed */
+    order.confirmed = 0;
+
     /* Save transaction to file */
     if (save_transaction(&order)) {
-        printf("\nTransaction saved successfully!\n\n");
+        printf("\nTransaction saved successfully (pending confirmation)!\n\n");
     } else {
         printf("\nError: Could not save transaction to file.\n\n");
     }
@@ -318,15 +391,25 @@ int compare_orders_desc(const void *a, const void *b) {
 void transaction_list(void) {
     #define MAX_DISPLAY_ORDERS 50  /* Reduced from 100 to save memory */
     #define ORDERS_PER_PAGE 10
-    static StockOrder orders[MAX_DISPLAY_ORDERS];  /* Use static to avoid stack overflow */
-    int count, i;
+    static StockOrder all_orders[MAX_DISPLAY_ORDERS];  /* Use static to avoid stack overflow */
+    static StockOrder orders[MAX_DISPLAY_ORDERS];  /* Filtered confirmed orders */
+    int total_count, count, i, j;
     int current_page = 0;
     int total_pages;
     char navigation[10];
     int viewing = 1;
 
-    /* Load transactions from file */
-    count = load_transactions(orders, MAX_DISPLAY_ORDERS);
+    /* Load all transactions from file */
+    total_count = load_transactions(all_orders, MAX_DISPLAY_ORDERS);
+
+    /* Filter only confirmed transactions */
+    count = 0;
+    for (i = 0; i < total_count; i++) {
+        if (all_orders[i].confirmed == 1) {
+            orders[count] = all_orders[i];
+            count++;
+        }
+    }
 
     if (count == 0) {
         clear_screen();
@@ -356,7 +439,7 @@ void transaction_list(void) {
         clear_screen();
 
         printf("===============================================================================\n");
-        printf("                     TRANSACTION LIST - Page %d of %d\n", current_page + 1, total_pages);
+        printf("                  CONFIRMED TRANSACTIONS - Page %d of %d\n", current_page + 1, total_pages);
         printf("===============================================================================\n\n");
 
         /* Table header with fixed widths */
@@ -396,7 +479,7 @@ void transaction_list(void) {
 
         printf("\n-------------------------------------------------------------------------------\n");
         printf("Total transactions: %d\n", count);
-        printf("Commands: [N]ext page, [P]revious page, [M]ain menu\n");
+        printf("Commands: [R]eload, [N]ext page, [P]revious page, [M]ain menu\n");
         printf("Enter command: ");
 
         if (fgets(navigation, sizeof(navigation), stdin) == NULL) {
@@ -406,7 +489,41 @@ void transaction_list(void) {
         navigation[strcspn(navigation, "\n")] = 0;
         str_to_upper(navigation);
 
-        if (navigation[0] == 'N') {
+        if (navigation[0] == 'R') {
+            /* Reload data from file */
+            total_count = load_transactions(all_orders, MAX_DISPLAY_ORDERS);
+
+            /* Filter only confirmed transactions */
+            count = 0;
+            for (i = 0; i < total_count; i++) {
+                if (all_orders[i].confirmed == 1) {
+                    orders[count] = all_orders[i];
+                    count++;
+                }
+            }
+
+            if (count == 0) {
+                clear_screen();
+                printf("No confirmed transactions found after reload.\n");
+                wait_for_enter();
+                viewing = 0;
+                continue;
+            }
+
+            /* Sort orders by date/time descending */
+            qsort(orders, count, sizeof(StockOrder), compare_orders_desc);
+
+            /* Recalculate total pages */
+            total_pages = (count + ORDERS_PER_PAGE - 1) / ORDERS_PER_PAGE;
+
+            /* Reset page if needed */
+            if (current_page >= total_pages) {
+                current_page = 0;
+            }
+
+            printf("Data reloaded successfully. Press Enter to continue...");
+            getchar();
+        } else if (navigation[0] == 'N') {
             if (current_page < total_pages - 1) {
                 current_page++;
             } else {
@@ -480,6 +597,233 @@ int load_transactions(StockOrder *orders, int max_orders) {
     return count;
 }
 
+void pending_transactions(void) {
+    #define MAX_DISPLAY_ORDERS 50
+    #define ORDERS_PER_PAGE 10
+    static StockOrder all_orders[MAX_DISPLAY_ORDERS];  /* All orders */
+    static StockOrder pending_orders[MAX_DISPLAY_ORDERS];  /* Filtered pending orders */
+    int total_count, pending_count, i;
+    int current_page = 0;
+    int total_pages;
+    char navigation[10];
+    int viewing = 1;
+
+    /* Load all transactions from file */
+    total_count = load_transactions(all_orders, MAX_DISPLAY_ORDERS);
+
+    /* Filter only unconfirmed transactions */
+    pending_count = 0;
+    for (i = 0; i < total_count; i++) {
+        if (all_orders[i].confirmed == 0) {
+            pending_orders[pending_count] = all_orders[i];
+            pending_count++;
+        }
+    }
+
+    if (pending_count == 0) {
+        clear_screen();
+        printf("No pending transactions found.\n");
+        wait_for_enter();
+        return;
+    }
+
+    /* Sort orders by date/time descending */
+    qsort(pending_orders, pending_count, sizeof(StockOrder), compare_orders_desc);
+
+    /* Calculate total pages */
+    total_pages = (pending_count + ORDERS_PER_PAGE - 1) / ORDERS_PER_PAGE;
+
+    while (viewing) {
+        int start_index = current_page * ORDERS_PER_PAGE;
+        int end_index = start_index + ORDERS_PER_PAGE;
+        if (end_index > pending_count) {
+            end_index = pending_count;
+        }
+
+        clear_screen();
+
+        printf("===============================================================================\n");
+        printf("                   PENDING TRANSACTIONS - Page %d of %d\n", current_page + 1, total_pages);
+        printf("===============================================================================\n\n");
+
+        /* Table header with fixed widths */
+        printf("%-8s %-16s %-10s %-6s %-5s %-9s %-7s %-6s\n",
+               "Acct#", "Timestamp", "Broker", "Action", "Qty", "Price", "Ticker", "Type");
+        printf("-------------------------------------------------------------------------------\n");
+
+        /* Display orders for current page */
+        for (i = start_index; i < end_index; i++) {
+            char timestamp_str[20];
+            struct tm *tm_info;
+
+            /* Convert Unix timestamp to tm structure */
+            tm_info = localtime(&pending_orders[i].timestamp);
+            if (tm_info != NULL) {
+                sprintf(timestamp_str, "%02d/%02d/%02d %02d:%02d",
+                        tm_info->tm_mon + 1,
+                        tm_info->tm_mday,
+                        tm_info->tm_year % 100,
+                        tm_info->tm_hour,
+                        tm_info->tm_min);
+            } else {
+                /* Fallback if localtime fails */
+                sprintf(timestamp_str, "UNIX:%ld", (long)pending_orders[i].timestamp);
+            }
+
+            printf("%-8lu %-16s %-10.10s %-6s %-5lu $%-8.2f %-7.7s %-6s\n",
+                (unsigned long)pending_orders[i].customer_account_no,
+                timestamp_str,
+                pending_orders[i].broker_id,
+                pending_orders[i].action == ORDER_ACTION_BUY ? "BUY" : "SELL",
+                (unsigned long)pending_orders[i].quantity,
+                pending_orders[i].price,
+                pending_orders[i].ticker,
+                pending_orders[i].order_type == ORDER_TYPE_LIMIT ? "LIMIT" : "MARKET");
+        }
+
+        printf("\n-------------------------------------------------------------------------------\n");
+        printf("Total pending transactions: %d\n", pending_count);
+        printf("Commands: [S]ubmit all, [R]eload, [N]ext, [P]revious, [M]ain menu\n");
+        printf("Enter command: ");
+
+        if (fgets(navigation, sizeof(navigation), stdin) == NULL) {
+            viewing = 0;
+            continue;
+        }
+        navigation[strcspn(navigation, "\n")] = 0;
+        str_to_upper(navigation);
+
+        if (navigation[0] == 'S') {
+            /* Submit all pending transactions */
+            clear_screen();
+            printf("\nSubmitting %d pending transactions...\n\n", pending_count);
+            show_loading_animation();
+
+            /* Mark all pending transactions as confirmed */
+            for (i = 0; i < total_count; i++) {
+                if (all_orders[i].confirmed == 0) {
+                    all_orders[i].confirmed = 1;
+                }
+            }
+
+            /* Save all transactions back to file */
+            if (save_all_transactions(all_orders, total_count)) {
+                printf("\n\nAll transactions confirmed successfully!\n");
+            } else {
+                printf("\n\nError confirming transactions.\n");
+            }
+            wait_for_enter();
+            viewing = 0;  /* Exit after submission */
+        } else if (navigation[0] == 'R') {
+            /* Reload data from file */
+            total_count = load_transactions(all_orders, MAX_DISPLAY_ORDERS);
+
+            /* Filter only unconfirmed transactions */
+            pending_count = 0;
+            for (i = 0; i < total_count; i++) {
+                if (all_orders[i].confirmed == 0) {
+                    pending_orders[pending_count] = all_orders[i];
+                    pending_count++;
+                }
+            }
+
+            if (pending_count == 0) {
+                clear_screen();
+                printf("No pending transactions found after reload.\n");
+                wait_for_enter();
+                viewing = 0;
+                continue;
+            }
+
+            /* Sort orders by date/time descending */
+            qsort(pending_orders, pending_count, sizeof(StockOrder), compare_orders_desc);
+
+            /* Recalculate total pages */
+            total_pages = (pending_count + ORDERS_PER_PAGE - 1) / ORDERS_PER_PAGE;
+
+            /* Reset page if needed */
+            if (current_page >= total_pages) {
+                current_page = 0;
+            }
+
+            printf("Data reloaded successfully. Press Enter to continue...");
+            getchar();
+        } else if (navigation[0] == 'N') {
+            if (current_page < total_pages - 1) {
+                current_page++;
+            } else {
+                printf("Already on last page. Press Enter to continue...");
+                getchar();
+            }
+        } else if (navigation[0] == 'P') {
+            if (current_page > 0) {
+                current_page--;
+            } else {
+                printf("Already on first page. Press Enter to continue...");
+                getchar();
+            }
+        } else if (navigation[0] == 'M') {
+            viewing = 0;
+        } else {
+            printf("Invalid command. Press Enter to continue...");
+            getchar();
+        }
+    }
+}
+
+void show_loading_animation(void) {
+    int i, j;
+    int total_steps = 50;  /* Progress bar width */
+
+    printf("Processing transactions...\n");
+    printf("[");
+    for (i = 0; i < total_steps; i++) {
+        printf(" ");
+    }
+    printf("]\r[");
+    fflush(stdout);
+
+    /* 10 second animation */
+    for (i = 0; i <= total_steps; i++) {
+        /* Print progress bar */
+        for (j = 0; j < i; j++) {
+            printf("=");
+        }
+        if (i < total_steps) {
+            printf(">");
+        }
+        fflush(stdout);
+
+        /* Wait approximately 200ms (10 seconds / 50 steps) */
+        /* Adjusted for Amiga 500 (7.14 MHz 68000) */
+        {
+            long k;
+            /* Reduced iteration count for faster animation on Amiga */
+            for (k = 0; k < 50000; k++) {
+                /* Busy wait - adjusted for Amiga processor speed */
+            }
+        }
+
+        /* Move cursor back to start of progress bar */
+        printf("\r[");
+    }
+
+    printf("\nTransaction processing complete!");
+}
+
+int save_all_transactions(StockOrder *orders, int count) {
+    FILE *fp;
+
+    fp = fopen("transactions.dat", "wb");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    fwrite(orders, sizeof(StockOrder), count, fp);
+    fclose(fp);
+    return 1;
+}
+
 void initialize_data_file(void) {
     FILE *fp;
     static StockOrder orders[10];  /* Use static to avoid stack issues */
@@ -513,6 +857,7 @@ void initialize_data_file(void) {
     orders[0].price = 84.25;  /* Realistic GM price in 1988 */
     strcpy(orders[0].ticker, "GM");
     orders[0].order_type = ORDER_TYPE_LIMIT;
+    orders[0].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 2 - Oct 5, 1988 14:30 - IBM */
     orders[1].customer_account_no = 234567;
@@ -523,6 +868,7 @@ void initialize_data_file(void) {
     orders[1].price = 129.50;  /* IBM was around $125-135 in Oct 1988 */
     strcpy(orders[1].ticker, "IBM");
     orders[1].order_type = ORDER_TYPE_MARKET;
+    orders[1].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 3 - Oct 7, 1988 10:15 - GE (General Electric) */
     orders[2].customer_account_no = 345678;
@@ -533,6 +879,7 @@ void initialize_data_file(void) {
     orders[2].price = 44.75;  /* GE price in 1988 */
     strcpy(orders[2].ticker, "GE");
     orders[2].order_type = ORDER_TYPE_LIMIT;
+    orders[2].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 4 - Oct 11, 1988 11:00 - XON (Exxon) */
     orders[3].customer_account_no = 456789;
@@ -543,6 +890,7 @@ void initialize_data_file(void) {
     orders[3].price = 45.50;  /* Exxon price in 1988 */
     strcpy(orders[3].ticker, "XON");
     orders[3].order_type = ORDER_TYPE_MARKET;
+    orders[3].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 5 - Oct 14, 1988 15:45 - KO (Coca-Cola) */
     orders[4].customer_account_no = 567890;
@@ -553,6 +901,7 @@ void initialize_data_file(void) {
     orders[4].price = 42.25;  /* KO price in 1988 */
     strcpy(orders[4].ticker, "KO");
     orders[4].order_type = ORDER_TYPE_LIMIT;
+    orders[4].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 6 - Oct 18, 1988 10:20 - F (Ford) */
     orders[5].customer_account_no = 678901;
@@ -563,6 +912,7 @@ void initialize_data_file(void) {
     orders[5].price = 52.75;  /* Ford price in 1988 */
     strcpy(orders[5].ticker, "F");
     orders[5].order_type = ORDER_TYPE_MARKET;
+    orders[5].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 7 - Oct 20, 1988 13:10 - T (AT&T) */
     orders[6].customer_account_no = 789012;
@@ -573,6 +923,7 @@ void initialize_data_file(void) {
     orders[6].price = 28.50;  /* AT&T price in 1988 */
     strcpy(orders[6].ticker, "T");
     orders[6].order_type = ORDER_TYPE_LIMIT;
+    orders[6].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 8 - Oct 24, 1988 09:30 - MRK (Merck) */
     orders[7].customer_account_no = 890123;
@@ -583,6 +934,7 @@ void initialize_data_file(void) {
     orders[7].price = 58.25;  /* Merck price in 1988 */
     strcpy(orders[7].ticker, "MRK");
     orders[7].order_type = ORDER_TYPE_MARKET;
+    orders[7].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 9 - Oct 26, 1988 16:00 - PG (Procter & Gamble) */
     orders[8].customer_account_no = 901234;
@@ -593,6 +945,7 @@ void initialize_data_file(void) {
     orders[8].price = 89.75;  /* P&G price in 1988 */
     strcpy(orders[8].ticker, "PG");
     orders[8].order_type = ORDER_TYPE_LIMIT;
+    orders[8].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Order 10 - Oct 28, 1988 11:55 - GE (General Electric) */
     orders[9].customer_account_no = 112345;
@@ -603,6 +956,7 @@ void initialize_data_file(void) {
     orders[9].price = 44.50;  /* GE price in 1988 */
     strcpy(orders[9].ticker, "GE");
     orders[9].order_type = ORDER_TYPE_MARKET;
+    orders[9].confirmed = 1;  /* Initial orders are confirmed */
 
     /* Write all orders to file */
     fwrite(orders, sizeof(StockOrder), 10, fp);
